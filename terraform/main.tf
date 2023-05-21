@@ -46,10 +46,6 @@ resource "aws_sns_topic" "sns-CloudConvertR" {
   policy = data.aws_iam_policy_document.topic.json
 }
 
-variable "email" {
-  type = string
-}
-
 # ----- SQS -----
 resource "aws_sqs_queue" "sqs-CloudConvertR" {
   name = "sqs-CloudConvertR"
@@ -194,9 +190,12 @@ resource "aws_sns_topic_policy" "default" {
   policy = data.aws_iam_policy_document.sns-cloudwatch-policy.json
 }
 
+variable "email" {
+  type = string
+}
 
 resource "aws_sns_topic_subscription" "lambda_errors_email_notification" {
   topic_arn = aws_sns_topic.sns-cloudwatch-CloudConvertR.arn
   protocol  = "email"
-  endpoint  = "adneycm@al.insper.edu.br"
+  endpoint  = var.email
 }
