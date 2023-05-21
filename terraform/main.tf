@@ -2,22 +2,20 @@ provider "aws" {
   region="us-east-1"
 }
 
-
-
 # ----- S3 -----
-resource "aws_s3_bucket" "input-bucket-cloud-project" {
-  bucket = "input-bucket-cloud-project"
+resource "aws_s3_bucket" "input-bucket-cloudconvertr" {
+  bucket = "input-bucket-cloudconvertr"
 }
 
-resource "aws_s3_bucket" "output-bucket-cloud-project" {
-  bucket = "output-bucket-cloud-project"
+resource "aws_s3_bucket" "output-bucket-cloudconvertr" {
+  bucket = "output-bucket-cloudconvertr"
 }
 
 resource "aws_s3_bucket_notification" "bucket_notification" {
-  bucket = aws_s3_bucket.input-bucket-cloud-project.id
+  bucket = aws_s3_bucket.input-bucket-cloudconvertr.id
 
   topic {
-    topic_arn  = aws_sns_topic.uploaded-file-topic.arn
+    topic_arn  = aws_sns_topic.sns-CloudConvertR.arn
     events     = ["s3:ObjectCreated:Put", "s3:ObjectCreated:Post"]
   }
 }
@@ -33,31 +31,34 @@ data "aws_iam_policy_document" "topic" {
     }
 
     actions   = ["SNS:Publish"]
-    resources = ["arn:aws:sns:*:*:uploaded-file-topic"]
+    resources = ["arn:aws:sns:*:*:sns-CloudConvertR"]
 
     condition {
       test     = "ArnLike"
       variable = "aws:SourceArn"
-      values   = [aws_s3_bucket.input-bucket-cloud-project.arn]
+      values   = [aws_s3_bucket.input-bucket-cloudconvertr.arn]
     }
   }
 }
 
-resource "aws_sns_topic" "uploaded-file-topic" {
-  name   = "uploaded-file-topic"
+resource "aws_sns_topic" "sns-CloudConvertR" {
+  name   = "sns-CloudConvertR"
   policy = data.aws_iam_policy_document.topic.json
 }
 
+variable "email" {
+  type = string
+}
 
 # ----- SQS -----
-resource "aws_sqs_queue" "sqs-queue-files" {
-  name = "sqs-queue-files"
+resource "aws_sqs_queue" "sqs-CloudConvertR" {
+  name = "sqs-CloudConvertR"
 }
 
 resource "aws_sns_topic_subscription" "sqs_notification" {
-  topic_arn = aws_sns_topic.uploaded-file-topic.arn
+  topic_arn = aws_sns_topic.sns-CloudConvertR.arn
   protocol  = "sqs"
-  endpoint  = aws_sqs_queue.sqs-queue-files.arn
+  endpoint  = aws_sqs_queue.sqs-CloudConvertR.arn
 }
 
 data "aws_iam_policy_document" "sqs-policy" {
@@ -71,18 +72,18 @@ data "aws_iam_policy_document" "sqs-policy" {
     }
 
     actions   = ["sqs:SendMessage"]
-    resources = [aws_sqs_queue.sqs-queue-files.arn]
+    resources = [aws_sqs_queue.sqs-CloudConvertR.arn]
 
     condition {
       test     = "ArnEquals"
       variable = "aws:SourceArn"
-      values   = [aws_sns_topic.uploaded-file-topic.arn]
+      values   = [aws_sns_topic.sns-CloudConvertR.arn]
     }
   }
 }
 
-resource "aws_sqs_queue_policy" "test" {
-  queue_url = aws_sqs_queue.sqs-queue-files.id
+resource "aws_sqs_queue_policy" "sqs-policy" {
+  queue_url = aws_sqs_queue.sqs-CloudConvertR.id
   policy    = data.aws_iam_policy_document.sqs-policy.json
 }
 
@@ -123,18 +124,79 @@ resource "aws_iam_role_policy_attachment" "lambda_basic_execution_role_policy" {
 data "archive_file" "zip_python_code" {
   type = "zip"
   source_dir  = "${path.module}/python/"
-  output_path = "${path.module}/python/lambda-cloud-project.zip"
+  output_path = "${path.module}/python/lambda-CloudConvertR.zip"
 }
 
-resource "aws_lambda_function" "lambda-test-cp" {
-  filename      = "${path.module}/python/lambda-cloud-project.zip"
-  function_name = "lambda-function-cp"
+resource "aws_lambda_function" "lambda-CloudConvertR" {
+  filename      = "${path.module}/python/lambda-CloudConvertR.zip"
+  function_name = "lambda-CloudConvertR"
   role          = aws_iam_role.lambda_role.arn
-  handler       = "lambda-cloud-project.lambda_handler"   # <nome_do_arquivo.py>.<nome_da_função_dentro_do_arquivo>
+  handler       = "lambda-CloudConvertR.CloudConvertR"   # <nome_do_arquivo.py>.<nome_da_função_dentro_do_arquivo>
   runtime       = "python3.8"
+  layers        = [aws_lambda_layer_version.lambda_layer_payload.arn]
 }
 
 resource "aws_lambda_event_source_mapping" "event_source_mapping" {
-  event_source_arn = aws_sqs_queue.sqs-queue-files.arn
-  function_name    = aws_lambda_function.lambda-test-cp.arn
+  event_source_arn = aws_sqs_queue.sqs-CloudConvertR.arn
+  function_name    = aws_lambda_function.lambda-CloudConvertR.arn
+}
+
+resource "aws_lambda_layer_version" "lambda_layer_payload" {
+  filename   = "${path.module}/python/python.zip"
+  layer_name = "markdown"
+}
+
+# ----- CLOUD WATCH -----
+resource "aws_sns_topic" "sns-cloudwatch-CloudConvertR" {
+  name   = "sns-cloudwatch-CloudConvertR"
+}
+
+resource "aws_cloudwatch_metric_alarm" "cloudwatch-CloudConvertR" {
+  alarm_name                = "cloudwatch-CloudConvertR"
+  comparison_operator       = "GreaterThanThreshold"
+  evaluation_periods        = 1
+  metric_name               = "Errors"
+  namespace                 = "AWS/Lambda"
+  period                    = 60
+  statistic                 = "Sum"
+  threshold                 = 0
+  alarm_description         = "This metric monitors Lambda function errors"
+  alarm_actions             = [aws_sns_topic.sns-cloudwatch-CloudConvertR.arn]
+  insufficient_data_actions = []
+  dimensions = {
+    FunctionName = aws_lambda_function.lambda-CloudConvertR.id
+  }
+}
+
+
+data "aws_iam_policy_document" "sns-cloudwatch-policy" {
+  statement {
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudwatch.amazonaws.com"]
+    }
+
+    actions   = ["SNS:Publish"]
+    resources = ["arn:aws:sns:*:*:sns-cloudwatch-CloudConvertR"]
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = [aws_cloudwatch_metric_alarm.cloudwatch-CloudConvertR.arn]
+    }
+  }
+}
+
+resource "aws_sns_topic_policy" "default" {
+  arn = aws_sns_topic.sns-cloudwatch-CloudConvertR.arn
+  policy = data.aws_iam_policy_document.sns-cloudwatch-policy.json
+}
+
+
+resource "aws_sns_topic_subscription" "lambda_errors_email_notification" {
+  topic_arn = aws_sns_topic.sns-cloudwatch-CloudConvertR.arn
+  protocol  = "email"
+  endpoint  = "adneycm@al.insper.edu.br"
 }
